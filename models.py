@@ -1,6 +1,7 @@
 from utils import *
 import mindspore
 from mindspore.dataset import GeneratorDataset
+from typing import Tuple
 
 
 class BASEModel(mindspore.nn.Cell):
@@ -13,7 +14,8 @@ class BASEModel(mindspore.nn.Cell):
         self.item_embedding = embedding2_module
         self.rec_model = rec_module
 
-    def construct(self, x1, x2):
+    def construct(self, x1_x2: Tuple):
+        x1, x2 = x1_x2
         pu, pi = self.input_user_loading(x1), self.input_item_loading(x2)
         eu, ei = self.user_embedding(pu), self.item_embedding(pi)
         rec_value = self.rec_model(eu, ei)
@@ -63,9 +65,9 @@ class LOCALUpdate:
                                                                                                               sup_size,
                                                                                                               que_size,
                                                                                                               device)
-        user_data = UserDataLoader(self.s_x1, self.s_x2, self.s_y, self.s_y0)
-        self.user_data_loader = GeneratorDataset(user_data,
-                                                 ["user_info", "item_info", "ratings", "cold_labels"], shuffle=False)
+        self.user_data = UserDataLoader(self.s_x1, self.s_x2, self.s_y, self.s_y0)
+        # self.user_data_loader = GeneratorDataset(self.user_data,
+        #                                          ["user_info", "item_info", "ratings", "cold_labels"], shuffle=False)
         self.model = your_model
 
         self.update_lr = update_lr
@@ -83,15 +85,50 @@ class LOCALUpdate:
 
 
     def train(self):
-        net_with_loss = mindspore.nn.WithLossCell(self.model, self.loss_fn)
-        train_network = mindspore.nn.TrainOneStepCell(net_with_loss, self.optimizer)
-        train_network.set_train()
+        # net_with_loss = mindspore.nn.WithLossCell(self.model, self.loss_fn)
+        # train_network = mindspore.nn.TrainOneStepCell(net_with_loss, self.optimizer)
+        # train_network.set_train()
+#
+        # for i in range(self.n_loop):
+        #     # on support set
+        #     idx = 0
+        #     for x1, x2, y, y0 in self.user_data:
+        #         print(f'data: {idx}')
+        #         idx += 1
+        #         # 在前面添加一个维度
+        #         x1 = mindspore.ops.reshape(x1, (1, len(x1)))
+        #         x2 = mindspore.ops.reshape(x2, (1, len(x2)))
+#
+        #         y = y.view(1)
+#
+        #         # 计算loss的时候，需要把y变成one-hot编码
+        #         label_y = mindspore.ops.OneHot()(y, 5,
+        #                                          mindspore.Tensor(1.0, mindspore.float32),
+        #                                          mindspore.Tensor(0.0, mindspore.float32))
+#
+        #         loss = train_network((x1, x2), label_y)
+#
+        # loss = train_network((self.q_x1, self.q_x2), self.q_y.astype('int32'))
+#
+        # u_grad, i_grad, r_grad = self.model.get_grad()
+        # return u_grad, i_grad, r_grad
+
+        def forward_fn(data, label):
+            logits = self.model(data)
+            loss = self.loss_fn(logits, label)
+            return loss, logits
+
+        grad_fn = mindspore.value_and_grad(forward_fn, None, self.optimizer.parameters, has_aux=True)
+
+        def train_step(data, label):
+            (loss, _), grads = grad_fn(data, label)
+            self.optimizer(grads)
+            return loss, grads
+
+
 
         for i in range(self.n_loop):
-            # on support set
-            for data in self.user_data_loader.create_dict_iterator():
-                x1, x2, y, y0 = data["user_info"], data["item_info"], data["ratings"], data["cold_labels"]
-                # 在前面添加一个维度
+            for x1, x2, y, y0 in self.user_data:
                 x1 = mindspore.ops.reshape(x1, (1, len(x1)))
                 x2 = mindspore.ops.reshape(x2, (1, len(x2)))
 
@@ -99,29 +136,47 @@ class LOCALUpdate:
 
                 # 计算loss的时候，需要把y变成one-hot编码
                 label_y = mindspore.ops.OneHot()(y, 5,
-                                                 mindspore.Tensor(1.0, mindspore.float32),
-                                                 mindspore.Tensor(0.0, mindspore.float32))
+                                                mindspore.Tensor(1.0, mindspore.float32),
+                                                mindspore.Tensor(0.0, mindspore.float32))
 
-                loss = train_network((x1, x2), label_y)
+                loss, grads = train_step((x1, x2), label_y)
 
-        loss = train_network((self.q_x1, self.q_x2), self.q_y)
+        # 最后需要梯度
+        loss, grads = train_step((self.q_x1, self.q_x2), self.q_y.astype('int32'))
 
-        u_grad, i_grad, r_grad = self.model.get_grad()
-        return u_grad, i_grad, r_grad
+        def get_param_list(start, end):
+            params = []
+            count = 0
+            while start <= end:
+                if count % 2 == 0:
+                    value = deepcopy(grads[start])
+                    params.append(value)
+                    del value
+                count += 1
+                start += 1
+            return params
+
+        u_emb_params = get_param_list(start=9, end=12)
+        i_emb_params = get_param_list(start=13, end=16)
+        rec_params = get_param_list(start=17, end=22)
+
+        return u_emb_params, i_emb_params, rec_params
 
     def test(self):
         for i in range(self.n_loop):
-            # on support set
-            for i_batch, (x1, x2, y, y0) in enumerate(self.user_data_loader):
-                x1, x2, y = x1.to(self.device), x2.to(self.device), y.to(self.device)
-                pred_y = self.model(x1, x2)
-                loss = self.loss_fn(pred_y, y)
-                self.optimizer.zero_grad()
-                loss.backward()  # local theta updating
-                self.optimizer.step()
+            for x1, x2, y, y0 in self.user_data:
+                x1 = mindspore.ops.reshape(x1, (1, len(x1)))
+                x2 = mindspore.ops.reshape(x2, (1, len(x2)))
 
-        # D.I.Y your calculation for the results
-        q_pred_y = self.model(self.q_x1, self.q_x2)  # on query set
+                y = y.view(1)
+
+                # 计算loss的时候，需要把y变成one-hot编码
+                label_y = mindspore.ops.OneHot()(y, 5,
+                                                mindspore.Tensor(1.0, mindspore.float32),
+                                                mindspore.Tensor(0.0, mindspore.float32))
+
+                logits = self.model((x1, x2))
+                loss = self.loss_fn(logits, label_y)
 
 
 def maml_train(raw_phi_u, raw_phi_i, raw_phi_r, u_grad_list, i_grad_list, r_grad_list, global_lr):

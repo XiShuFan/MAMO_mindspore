@@ -107,7 +107,8 @@ def get_mui(att_values, mui, n_k):
 
 
 def update_mui(att_values, n_k, u_mui):
-    repeat_u_mui = u_mui.unsqueeze(0).repeat(n_k, 1, 1)
-    attention_tensor = att_values.reshape(n_k, 1, 1)
+    repeat_u_mui = mindspore.ops.tile(u_mui.unsqueeze(0), (n_k, 1, 1))
+    att_values = att_values.unsqueeze(0)
+    attention_tensor = mindspore.ops.Reshape()(att_values, (n_k, 1, 1))
     attend_u_mui = mindspore.ops.Mul()(attention_tensor, repeat_u_mui)
     return attend_u_mui

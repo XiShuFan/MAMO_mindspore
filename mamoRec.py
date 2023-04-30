@@ -23,7 +23,7 @@ class MAMRec:
         self.rho = config_settings['rho']  # local learning rate
         self.lamda = config_settings['lamda']  # global learning rate
         self.tao = config_settings['tao']  # hyper-parameter for initializing personalized u weights
-        self.device = mindspore.context.get_context("device_target")
+        self.device = "CPU"
         self.n_k = config_settings['n_k']
         self.alpha = config_settings['alpha']
         self.beta = config_settings['beta']
@@ -131,5 +131,5 @@ class MAMRec:
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+    os.environ["CUDA_VISIBLE_DEVICES"] = '0'
     MAMRec('movielens')

@@ -12,10 +12,10 @@ config_settings = {
     'rho': 0.01,
     'lamda': 0.05,
     'tao': 0.01,
-    'n_k': 3,
+    'n_k': 1,
     'batch_size': 5,
-    'n_epoch': 3,
-    'n_inner_loop': 3,
-    'active_func': 'leaky_relu',
+    'n_epoch': 1,
+    'n_inner_loop': 1,
+    'active_func': 'sigmoid',
     'cuda_option': 'cuda:0'
 }
